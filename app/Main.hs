@@ -1,8 +1,11 @@
 {-# OPTIONS_GHC -Wno-orphans #-}
+{-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
+{-# HLINT ignore "Use newtype instead of data" #-}
 module Main where
 import Data.Functor
 import Data.List.Split
 import Numeric.LinearAlgebra
+import Data.List
 
 -- Check this one for benchmarks: https://www.kaggle.com/code/jedrzejdudzicz/mnist-dataset-100-accuracy
 
@@ -17,7 +20,11 @@ data Layer = Layer {
   directionStength :: Vector Double,
   activation :: AFunction } deriving (Show)
 
-data NeuralNetwork = NeuralNetwork { indata :: Vector Double, layers :: [Layer] } deriving (Show)
+data NeuralNetwork = NeuralNetwork { indata :: Vector Double, layers :: [Layer] } 
+
+-- implement show for NeuralNetwork, each layer should be printed with its weights and biases and activation function on a new line
+instance Show NeuralNetwork where
+  show (NeuralNetwork indata' layers') = "NeuralNetwork\n" ++ "indata: " ++ show indata' ++ "\n" ++ concatMap (\x -> show x ++ "\n") layers'
 
 trainingDataFromFile :: FilePath -> IO [TrainingData]
 trainingDataFromFile file = do
@@ -56,7 +63,34 @@ createLayerWithRandomWeights len aFunction = do
     return $ Layer (flatten weights) (flatten biases) (directionOneOrMinusOne $ flatten direction) (flatten directionStength) aFunction
     where directionOneOrMinusOne = cmap (\x -> if x > 0.5 then 1 else -1)
 
+
+createNeuralNetwork :: Vector Double -> [(Int, AFunction)] -> IO NeuralNetwork
+createNeuralNetwork indata layers = do
+    layers' <- mapM (uncurry createLayerWithRandomWeights) layers
+    return $ NeuralNetwork indata layers'
+
+
+feedForward :: NeuralNetwork -> Vector Double
+feedForward (NeuralNetwork indata layers) = foldl' feedForwardLayer indata layers
+    where
+      feedForwardLayer :: Vector Double -> Layer -> Vector Double
+      feedForwardLayer indata' (Layer weights' biases' _ _ activation') = case activation' of
+        Relu -> sumWeights relu
+        Sigmoid -> sumWeights sigmoid
+        SoftMax -> sumWeights softMax
+        Tanh -> sumWeights tanH
+        where sumWeights func = func $ let allWeightsAndBiases theWeight = sumElements $ cmap (+ theWeight) indata'
+                                          in cmap allWeightsAndBiases weights' + biases'
+
 main :: IO ()
 main = do
     trainingData <- trainingDataFromFile "/var/tmp/mnist/mnist_train.csv"
     print $ length trainingData
+
+testme :: IO ()
+testme = do
+    let indata = fromList [1, 2, 3]
+    let layers = [(2, Relu), (1, Relu)]
+    nn <- createNeuralNetwork indata layers
+    print nn
+    print $ feedForward nn
