@@ -30,12 +30,11 @@ instance Show TraininParameters where
 
 data Layer = Layer {
   weights :: Vector Double,
-  biases :: Vector Double,
   direction :: Vector Double,
   directionStength :: Vector Double,
   activation :: AFunction } deriving (Show)
 
-data NeuralNetwork = NeuralNetwork { layers :: [Layer] }
+data NeuralNetwork = NeuralNetwork { biases :: Vector Double, layers :: [Layer] }
 
 data Trainer = Trainer {
   nn :: NeuralNetwork,
@@ -50,7 +49,7 @@ data TrainedNetwork = TrainedNetwork {
 
 -- implement show for NeuralNetwork, each layer should be printed with its weights and biases and activation function on a new line
 instance Show NeuralNetwork where
-  show (NeuralNetwork layers') = "NeuralNetwork\n" ++ "indata: " ++ concatMap (\x -> show x ++ "\n") layers'
+  show (NeuralNetwork biases' layers') = "NeuralNetwork\n" ++ "biases: " ++ show biases' ++ "\n" ++ "layers: " ++ show layers'
 
 trainingDataFromFile :: FilePath -> IO [TrainingData]
 trainingDataFromFile file = do
@@ -83,24 +82,23 @@ tanH = cmap tanh
 createLayerWithRandomWeights :: Int -> AFunction -> IO Layer
 createLayerWithRandomWeights len aFunction = do
     weights <- rand 1 len
-    biases <- rand 1 len
     direction <- rand 1 len
     directionStength <- rand 1 len
-    return $ Layer (flatten weights) (flatten biases) (directionOneOrMinusOne $ flatten direction) (flatten directionStength) aFunction
+    return $ Layer (flatten weights) (directionOneOrMinusOne $ flatten direction) (flatten directionStength) aFunction
     where directionOneOrMinusOne = cmap (\x -> if x > 0.5 then 1 else -1)
 
 
 createNeuralNetwork :: [(Int, AFunction)] -> IO NeuralNetwork
 createNeuralNetwork layers = do
+    biases' <- do flatten <$> rand 1 (fst $ head layers)
     layers' <- mapM (uncurry createLayerWithRandomWeights) layers
-    return $ NeuralNetwork layers'
-
+    return $ NeuralNetwork biases' layers' 
 
 feedForward :: NeuralNetwork -> Vector Double -> Vector Double
-feedForward (NeuralNetwork layers) indata = foldl' feedForwardLayer indata layers
+feedForward (NeuralNetwork biases' layers) indata = foldl' feedForwardLayer indata layers
     where
       feedForwardLayer :: Vector Double -> Layer -> Vector Double
-      feedForwardLayer indata' (Layer weights' biases' _ _ activation') = case activation' of
+      feedForwardLayer indata' (Layer weights'  _ _ activation') = case activation' of
         Relu -> sumWeights relu
         Sigmoid -> sumWeights sigmoid
         SoftMax -> sumWeights softMax
@@ -125,6 +123,9 @@ testme = do
 -- create a function which updates the weights of the network based by randomy changing the weights and biases of the layers 
 -- updateWeights :: NeuralNetwork -> TraininParameters -> NeuralNetwork
 -- updateWeights nn traininParameters = do
-
-
+--    let layers' = layers nn
+--    let newLayers = map (updateLayerWeights traininParameters) layers'
+--    NeuralNetwork newLayers where
+--      updateLayerWeights :: TraininParameters -> Layer -> Layer
+--      updateLayerWeights traininParameters' (Layer weights' biases' direction' directionStength' activation') = do
 
