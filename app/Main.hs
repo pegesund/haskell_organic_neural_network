@@ -16,12 +16,17 @@ data AFunction = Relu | Sigmoid | SoftMax | Tanh deriving (Show)
 
 data TrainingData = TrainingData { inputs :: Vector Double, label :: Double } deriving (Show)
 
-data TraininParameters = TraininParameters { 
-  epochs :: Int, 
-  batchSize :: Int, 
-  maxChildren :: Int, 
-  maxEphochLifes :: Int, 
-  devSpeed :: Double } deriving (Show)
+data TraininParameters = TraininParameters {
+  epochs :: Int,
+  batchSize :: Int,
+  maxChildren :: Int,
+  maxEphochLifes :: Int,
+  devSpeed :: Double,
+  lossFunction :: Vector Double -> Vector Double -> Double,
+  accuracyFunction :: Vector Double -> Vector Double -> Double }
+
+instance Show TraininParameters where
+  show (TraininParameters epochs' batchSize' maxChildren' maxEphochLifes' devSpeed' _ _) = "TraininParameters\n" ++ "epochs: " ++ show epochs' ++ "\n" ++ "batchSize: " ++ show batchSize' ++ "\n" ++ "maxChildren: " ++ show maxChildren' ++ "\n" ++ "maxEphochLifes: " ++ show maxEphochLifes' ++ "\n" ++ "devSpeed: " ++ show devSpeed'
 
 data Layer = Layer {
   weights :: Vector Double,
@@ -30,16 +35,22 @@ data Layer = Layer {
   directionStength :: Vector Double,
   activation :: AFunction } deriving (Show)
 
-data NeuralNetwork = NeuralNetwork { indata :: Vector Double, layers :: [Layer] } 
+data NeuralNetwork = NeuralNetwork { layers :: [Layer] }
 
-data Trainer = Trainer { 
-  nn :: NeuralNetwork, 
-  trainingData :: [TrainingData], 
+data Trainer = Trainer {
+  nn :: NeuralNetwork,
+  trainingData :: [TrainingData],
   traininParameters :: TraininParameters } deriving (Show)
+
+data TrainedNetwork = TrainedNetwork {
+  nn' :: NeuralNetwork,
+  generation :: Int,
+  accuracy :: Double } deriving (Show)
+
 
 -- implement show for NeuralNetwork, each layer should be printed with its weights and biases and activation function on a new line
 instance Show NeuralNetwork where
-  show (NeuralNetwork indata' layers') = "NeuralNetwork\n" ++ "indata: " ++ show indata' ++ "\n" ++ concatMap (\x -> show x ++ "\n") layers'
+  show (NeuralNetwork layers') = "NeuralNetwork\n" ++ "indata: " ++ concatMap (\x -> show x ++ "\n") layers'
 
 trainingDataFromFile :: FilePath -> IO [TrainingData]
 trainingDataFromFile file = do
@@ -79,14 +90,14 @@ createLayerWithRandomWeights len aFunction = do
     where directionOneOrMinusOne = cmap (\x -> if x > 0.5 then 1 else -1)
 
 
-createNeuralNetwork :: Vector Double -> [(Int, AFunction)] -> IO NeuralNetwork
-createNeuralNetwork indata layers = do
+createNeuralNetwork :: [(Int, AFunction)] -> IO NeuralNetwork
+createNeuralNetwork layers = do
     layers' <- mapM (uncurry createLayerWithRandomWeights) layers
-    return $ NeuralNetwork indata layers'
+    return $ NeuralNetwork layers'
 
 
-feedForward :: NeuralNetwork -> Vector Double
-feedForward (NeuralNetwork indata layers) = foldl' feedForwardLayer indata layers
+feedForward :: NeuralNetwork -> Vector Double -> Vector Double
+feedForward (NeuralNetwork layers) indata = foldl' feedForwardLayer indata layers
     where
       feedForwardLayer :: Vector Double -> Layer -> Vector Double
       feedForwardLayer indata' (Layer weights' biases' _ _ activation') = case activation' of
@@ -106,7 +117,14 @@ testme :: IO ()
 testme = do
     let indata = fromList [1, 2, 3]
     let layers = [(2, Relu), (1, Relu)]
-    nn <- createNeuralNetwork indata layers
+    nn <- createNeuralNetwork layers
     print nn
-    print $ feedForward nn
+    print $ feedForward nn indata
+
+
+-- create a function which updates the weights of the network based by randomy changing the weights and biases of the layers 
+-- updateWeights :: NeuralNetwork -> TraininParameters -> NeuralNetwork
+-- updateWeights nn traininParameters = do
+
+
 
