@@ -7,11 +7,21 @@ import Data.List.Split
 import Numeric.LinearAlgebra
 import Data.List
 
+-- import UnliftIO
+-- import Control.Concurrent
+
 -- Check this one for benchmarks: https://www.kaggle.com/code/jedrzejdudzicz/mnist-dataset-100-accuracy
 
 data AFunction = Relu | Sigmoid | SoftMax | Tanh deriving (Show)
 
 data TrainingData = TrainingData { inputs :: Vector Double, label :: Double } deriving (Show)
+
+data TraininParameters = TraininParameters { 
+  epochs :: Int, 
+  batchSize :: Int, 
+  maxChildren :: Int, 
+  maxEphochLifes :: Int, 
+  devSpeed :: Double } deriving (Show)
 
 data Layer = Layer {
   weights :: Vector Double,
@@ -21,6 +31,11 @@ data Layer = Layer {
   activation :: AFunction } deriving (Show)
 
 data NeuralNetwork = NeuralNetwork { indata :: Vector Double, layers :: [Layer] } 
+
+data Trainer = Trainer { 
+  nn :: NeuralNetwork, 
+  trainingData :: [TrainingData], 
+  traininParameters :: TraininParameters } deriving (Show)
 
 -- implement show for NeuralNetwork, each layer should be printed with its weights and biases and activation function on a new line
 instance Show NeuralNetwork where
@@ -94,3 +109,4 @@ testme = do
     nn <- createNeuralNetwork indata layers
     print nn
     print $ feedForward nn
+

@@ -50,6 +50,16 @@
   (major1) == 0 && (major2) <  2 || \
   (major1) == 0 && (major2) == 2 && (minor) <= 5)
 #endif /* MIN_VERSION_split */
+/* package unliftio-0.2.25.0 */
+#ifndef VERSION_unliftio
+#define VERSION_unliftio "0.2.25.0"
+#endif /* VERSION_unliftio */
+#ifndef MIN_VERSION_unliftio
+#define MIN_VERSION_unliftio(major1,major2,minor) (\
+  (major1) <  0 || \
+  (major1) == 0 && (major2) <  2 || \
+  (major1) == 0 && (major2) == 2 && (minor) <= 25)
+#endif /* MIN_VERSION_unliftio */
 
 /* tool gcc-13.2.1 */
 #ifndef TOOL_VERSION_gcc
