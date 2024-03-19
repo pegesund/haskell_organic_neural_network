@@ -12,6 +12,7 @@ import Control.Monad
 
 
 
+
 -- import UnliftIO
 -- import Control.Concurrent
 
@@ -79,7 +80,7 @@ trainingDataFromFile file = do
     nums <- iterateFile file <&> mapToNumbers
     let floats = mapToFloats nums
     let lables::[Int] = map (fromIntegral . head) nums
-    let labelVectors = map (createLabelVector 10) lables
+    let labelVectors = map (l2Normalize . createLabelVector 10) lables
     return $ zipWith TrainingData floats labelVectors
     where
       mapToFloats :: [[Int]] -> [Vector Double]
@@ -105,6 +106,9 @@ softMax x = cmap (/ sumElements (cmap exp x)) (cmap exp x)
 tanH :: Vector Double -> Vector Double
 tanH = cmap tanh
 
+l2Normalize :: Vector Double -> Vector Double
+l2Normalize x = cmap (/ sumElements (cmap (** 2) x)) x
+
 createLayerWithRandomWeights :: Int -> AFunction -> IO Layer
 createLayerWithRandomWeights len aFunction = do
     weights <- rand 1 len
@@ -125,10 +129,10 @@ feedForward (NeuralNetwork _ layers) indata = foldl' feedForwardLayer indata lay
     where
       feedForwardLayer :: Vector Double -> Layer -> Vector Double
       feedForwardLayer indata' (Layer weights'  _ _ activation') = case activation' of
-        Relu -> sumWeights relu
-        Sigmoid -> sumWeights sigmoid
+        Relu -> l2Normalize $ sumWeights relu
+        Sigmoid -> l2Normalize $ sumWeights sigmoid
         SoftMax -> sumWeights softMax
-        Tanh -> sumWeights tanH
+        Tanh -> l2Normalize $ sumWeights tanH
         where sumWeights func = func $ let allWeightsAndBiases theWeight = sumElements $ cmap (+ theWeight) indata'
                                           in cmap allWeightsAndBiases weights'
 
@@ -221,10 +225,34 @@ trainNetworks trainingData' networks trainingParameters' = do
   let resultVector :: [Vector Double] = zipWith (\x y -> feedForward x (inputs y)) children' batch
   -- calculate the loss for each of the children
   let losses = zipWith (lossFunction trainingParameters') resultVector (map label batch)
-  neuralNetworksWithLosses <- zipWithM (\x y -> return $ NeuralNetworkWithLoss x y) children' losses  
+  neuralNetworksWithLosses <- zipWithM (\x y -> return $ NeuralNetworkWithLoss x y) children' losses
   let sorted = sortOn loss neuralNetworksWithLosses
   let best = take (maxChildren trainingParameters') sorted
+  putStrLn $ "Losses: " ++ show best
   return $ map nn best
+
+
+testTraining :: IO ()
+testTraining = do
+      trainingData <- trainingDataFromFile "/var/tmp/mnist/mnist_train.csv"
+      let layers = [(784, Relu), (100, Relu), (10, SoftMax)]
+      nn <- createNeuralNetwork layers
+      let trainingParameters = createDefaultTrainingParameters
+      let nns networks epochs trainingparams  = do
+            if epochs == 0 then return networks else do
+              putStrLn $ "Epoch: " ++ show epochs
+              newNetworks <- trainNetworks trainingData networks trainingparams
+              nns newNetworks (epochs - 1) trainingparams
+      trainedNetworks <- nns [nn] (epochs trainingParameters) trainingParameters
+      print trainedNetworks
+
+testTrainingFirstLine :: IO (Vector Double)
+testTrainingFirstLine = do
+      trainingData <- trainingDataFromFile "/var/tmp/mnist/mnist_train.csv"
+      let layers = [(784, Relu), (100, Relu), (10, SoftMax)]
+      nn <- createNeuralNetwork layers
+      return $ feedForward nn (inputs $ head trainingData)
+
 
 
 
