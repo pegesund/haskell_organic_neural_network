@@ -8,8 +8,9 @@ import Data.List.Split
 import Numeric.LinearAlgebra
 import Data.List
 import System.Random
-import Numeric.LinearAlgebra.Devel (zipVectorWith)
 import Control.Monad
+
+
 
 -- import UnliftIO
 -- import Control.Concurrent
@@ -18,7 +19,7 @@ import Control.Monad
 
 data AFunction = Relu | Sigmoid | SoftMax | Tanh deriving (Show)
 
-data TrainingData = TrainingData { inputs :: Vector Double, label :: Double } deriving (Show)
+data TrainingData = TrainingData { inputs :: Vector Double, label :: Vector Double } deriving (Show)
 
 data TrainingParameters = TraininParameters {
   epochs :: Int,
@@ -49,16 +50,37 @@ data TrainedNetwork = TrainedNetwork {
   accuracy :: Double } deriving (Show)
 
 
+data NeuralNetworkWithLoss = NeuralNetworkWithLoss {
+  nn :: NeuralNetwork,
+  loss :: Double } deriving (Show)
+
+
 -- implement show for NeuralNetwork, each layer should be printed with its weights and biases and activation function on a new line
 instance Show NeuralNetwork where
   show (NeuralNetwork biases' layers') = "NeuralNetwork\n" ++ "biases: " ++ show biases' ++ "\n" ++ "layers: " ++ show layers'
+
+
+createDefaultTrainingParameters :: TrainingParameters
+createDefaultTrainingParameters = TraininParameters {
+  epochs = 10,
+  batchSize = 100,
+  maxChildren = 10,
+  maxEphochLifes = 10,
+  devSpeed = 0.1,
+  lossFunction = \x y -> sumElements $ cmap (** 2) (x - y),
+  accuracyFunction = \x y -> sumElements $ cmap (** 2) (x - y),
+  changeDir = 10,
+  numberOfChildren = 10
+}
+
 
 trainingDataFromFile :: FilePath -> IO [TrainingData]
 trainingDataFromFile file = do
     nums <- iterateFile file <&> mapToNumbers
     let floats = mapToFloats nums
-    let lables::[Double] = map (fromIntegral . head) nums
-    return $ zipWith TrainingData floats lables
+    let lables::[Int] = map (fromIntegral . head) nums
+    let labelVectors = map (createLabelVector 10) lables
+    return $ zipWith TrainingData floats labelVectors
     where
       mapToFloats :: [[Int]] -> [Vector Double]
       mapToFloats = map (fromList . map ((/255) . fromIntegral) . tail)
@@ -68,6 +90,8 @@ trainingDataFromFile file = do
       iterateFile f = do
         content <- readFile f
         return $ tail (lines content)
+      createLabelVector :: Int -> Int -> Vector Double
+      createLabelVector n l = fromList $ replicate l 0 ++ [1] ++ replicate (n - l - 1) 0
 
 sigmoid :: Vector Double -> Vector Double
 sigmoid = cmap (\x -> 1 / (1 + exp (-x)))
@@ -121,7 +145,7 @@ testme = do
     nn <- createNeuralNetwork layers
     print nn
     print $ feedForward nn indata
-    
+
 
 updateWeights :: NeuralNetwork -> TrainingParameters -> IO NeuralNetwork
 updateWeights nn traininParameters = do
@@ -173,12 +197,34 @@ mergeNetworkRandom nn1 nn2 = do
       let directionStength' = directionStength1 * r + directionStength2 * r'
       return $ Layer weights' direction' directionStength' activation where
         random01Vector :: Int -> IO (Vector Double)
-        random01Vector n = do 
+        random01Vector n = do
           r <- rand 1 n
-          return $ roundVector ( flatten r) 
+          return $ roundVector ( flatten r)
         inverse01Vector :: Vector Double -> Vector Double
         inverse01Vector = cmap (\x -> if x == 0 then 1 else 0)
-        
+
+
+createChildrenFromNetwork :: Int -> TrainingParameters -> NeuralNetwork -> IO [NeuralNetwork]
+createChildrenFromNetwork n trainingParameters nn = do
+  replicateM n (updateWeights nn trainingParameters)
+
+
+trainNetworks :: [TrainingData] -> [NeuralNetwork] -> TrainingParameters -> IO [NeuralNetwork]
+trainNetworks trainingData' networks trainingParameters' = do
+  children <- mapM (createChildrenFromNetwork (numberOfChildren trainingParameters') trainingParameters') networks
+  let children' = concat children
+  -- pick batch size random training data
+  randomGenerator <- getStdGen
+  let indexes = take (batchSize trainingParameters') $ randomRs (0, length trainingData' - 1) randomGenerator
+  let batch = map (trainingData' !!) indexes
+  -- run feedForward on each of the children with all the batches
+  let resultVector :: [Vector Double] = zipWith (\x y -> feedForward x (inputs y)) children' batch
+  -- calculate the loss for each of the children
+  let losses = zipWith (lossFunction trainingParameters') resultVector (map label batch)
+  neuralNetworksWithLosses <- zipWithM (\x y -> return $ NeuralNetworkWithLoss x y) children' losses  
+  let sorted = sortOn loss neuralNetworksWithLosses
+  let best = take (maxChildren trainingParameters') sorted
+  return $ map nn best
 
 
 
