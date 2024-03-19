@@ -228,7 +228,7 @@ trainNetworks trainingData' networks trainingParameters' = do
   neuralNetworksWithLosses <- zipWithM (\x y -> return $ NeuralNetworkWithLoss x y) children' losses
   let sorted = sortOn loss neuralNetworksWithLosses
   let best = take (maxChildren trainingParameters') sorted
-  putStrLn $ "Losses: " ++ show best
+  putStrLn $ "Losses: " ++ show (map loss best)
   return $ map nn best
 
 
@@ -243,8 +243,8 @@ testTraining = do
               putStrLn $ "Epoch: " ++ show epochs
               newNetworks <- trainNetworks trainingData networks trainingparams
               nns newNetworks (epochs - 1) trainingparams
-      trainedNetworks <- nns [nn] (epochs trainingParameters) trainingParameters
-      print trainedNetworks
+      _trainedNetworks <- nns [nn] (epochs trainingParameters) trainingParameters
+      print "Done"
 
 testTrainingFirstLine :: IO (Vector Double)
 testTrainingFirstLine = do
@@ -252,10 +252,3 @@ testTrainingFirstLine = do
       let layers = [(784, Relu), (100, Relu), (10, SoftMax)]
       nn <- createNeuralNetwork layers
       return $ feedForward nn (inputs $ head trainingData)
-
-
-
-
-
-
-
