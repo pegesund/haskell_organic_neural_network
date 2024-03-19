@@ -8,6 +8,8 @@ import Data.List.Split
 import Numeric.LinearAlgebra
 import Data.List
 import System.Random
+import Numeric.LinearAlgebra.Devel (zipVectorWith)
+import Control.Monad
 
 -- import UnliftIO
 -- import Control.Concurrent
@@ -26,11 +28,12 @@ data TrainingParameters = TraininParameters {
   devSpeed :: Double,
   lossFunction :: Vector Double -> Vector Double -> Double,
   accuracyFunction :: Vector Double -> Vector Double -> Double,
-  changeDir :: Int
+  changeDir :: Int,
+  numberOfChildren :: Int
   }
 
 instance Show TrainingParameters where
-  show (TraininParameters epochs' batchSize' maxChildren' maxEphochLifes' devSpeed' _ _ _) = "TraininParameters\n" ++ "epochs: " ++ show epochs' ++ "\n" ++ "batchSize: " ++ show batchSize' ++ "\n" ++ "maxChildren: " ++ show maxChildren' ++ "\n" ++ "maxEphochLifes: " ++ show maxEphochLifes' ++ "\n" ++ "devSpeed: " ++ show devSpeed'
+  show (TraininParameters epochs' batchSize' maxChildren' maxEphochLifes' devSpeed' _ _ _ _) = "TraininParameters\n" ++ "epochs: " ++ show epochs' ++ "\n" ++ "batchSize: " ++ show batchSize' ++ "\n" ++ "maxChildren: " ++ show maxChildren' ++ "\n" ++ "maxEphochLifes: " ++ show maxEphochLifes' ++ "\n" ++ "devSpeed: " ++ show devSpeed'
 
 data Layer = Layer {
   weights :: Vector Double,
@@ -39,11 +42,6 @@ data Layer = Layer {
   activation :: AFunction } deriving (Show)
 
 data NeuralNetwork = NeuralNetwork { biases :: Vector Double, layers :: [Layer] }
-
-data Trainer = Trainer {
-  nn :: NeuralNetwork,
-  trainingData :: [TrainingData],
-  traininParameters :: TrainingParameters } deriving (Show)
 
 data TrainedNetwork = TrainedNetwork {
   nn' :: NeuralNetwork,
@@ -93,12 +91,13 @@ createLayerWithRandomWeights len aFunction = do
 
 createNeuralNetwork :: [(Int, AFunction)] -> IO NeuralNetwork
 createNeuralNetwork layers = do
-    biases' <- do flatten <$> rand 1 (fst $ head layers)
+    -- biases' <- do flatten <$> rand 1 (fst $ head layers)
+    let biases' = konst 0 (fst $ head layers)
     layers' <- mapM (uncurry createLayerWithRandomWeights) layers
     return $ NeuralNetwork biases' layers'
 
 feedForward :: NeuralNetwork -> Vector Double -> Vector Double
-feedForward (NeuralNetwork biases' layers) indata = foldl' feedForwardLayer (indata + biases') layers
+feedForward (NeuralNetwork _ layers) indata = foldl' feedForwardLayer indata layers
     where
       feedForwardLayer :: Vector Double -> Layer -> Vector Double
       feedForwardLayer indata' (Layer weights'  _ _ activation') = case activation' of
@@ -113,6 +112,7 @@ main :: IO ()
 main = do
     trainingData <- trainingDataFromFile "/var/tmp/mnist/mnist_train.csv"
     print $ length trainingData
+    testme
 
 testme :: IO ()
 testme = do
@@ -121,9 +121,8 @@ testme = do
     nn <- createNeuralNetwork layers
     print nn
     print $ feedForward nn indata
+    
 
-
--- create a function which updates the weights of the network based by randomy changing the weights and biases of the layers 
 updateWeights :: NeuralNetwork -> TrainingParameters -> IO NeuralNetwork
 updateWeights nn traininParameters = do
   let layers' = layers nn
@@ -145,8 +144,44 @@ updateWeights nn traininParameters = do
         changeDirectionStrength = do
           rDirStrength <- randomRIO (0, 0.1) :: IO Double
           return $ cmap (\x -> x * ( 1 + rDirStrength)) directionStength' * direction'
+
+mergeNetworksAddition :: NeuralNetwork -> NeuralNetwork -> NeuralNetwork
+mergeNetworksAddition nn1 nn2 = NeuralNetwork (biases nn1) (zipWith mergeLayers (layers nn1) (layers nn2))
+  where
+    mergeLayers :: Layer -> Layer -> Layer
+    mergeLayers (Layer weights1 direction1 directionStength1 activation) (Layer weights2 direction2 directionStength2 _) =
+      Layer
+      ((weights1 + weights2) / 2)
+      ((direction1 + direction2) /2)
+      ((directionStength1 + directionStength2) / 2)
+      activation
+
+
+mergeNetworkRandom :: NeuralNetwork -> NeuralNetwork -> IO NeuralNetwork
+mergeNetworkRandom nn1 nn2 = do
+  let layers1 = layers nn1
+  let layers2 = layers nn2
+  newLayers <- zipWithM mergeLayers layers1 layers2
+  return $ NeuralNetwork (biases nn1) newLayers
+  where
+    mergeLayers :: Layer -> Layer -> IO Layer
+    mergeLayers (Layer weights1 direction1 directionStength1 activation) (Layer weights2 direction2 directionStength2 _) = do
+      r <- random01Vector (size weights1)
+      let r' = inverse01Vector r
+      let weights' = weights1 * r + weights2 * r'
+      let direction' = direction1 * r + direction2 * r'
+      let directionStength' = directionStength1 * r + directionStength2 * r'
+      return $ Layer weights' direction' directionStength' activation where
+        random01Vector :: Int -> IO (Vector Double)
+        random01Vector n = do 
+          r <- rand 1 n
+          return $ roundVector ( flatten r) 
+        inverse01Vector :: Vector Double -> Vector Double
+        inverse01Vector = cmap (\x -> if x == 0 then 1 else 0)
         
-        
+
+
+
 
 
 
