@@ -132,11 +132,21 @@ updateWeights nn traininParameters = do
   where
     updateLayerWeights :: TrainingParameters -> Layer -> IO Layer
     updateLayerWeights trainingParameters' (Layer weights' direction' directionStength' activation') = do
-      rDir <- randomRIO (0, changeDir trainingParameters') :: IO Int
-      let direction'' = if rDir == 1 then direction' * (-1) else direction'
-      rDirStrength <- randomRIO (-0.1, 0.1) :: IO Double
-      let directionStength'' = cmap (\x -> x * ( 1 + abs rDirStrength)) directionStength' * direction''
-      return $ Layer weights' direction'' directionStength'' activation'
+      direction'' <- changeDirection
+      directionStrength'' <- changeDirectionStrength
+      let weights'' = weights' * directionStrength''
+      return $ Layer weights'' direction''  directionStrength'' activation'
+      where
+        changeDirection :: IO (Vector Double)
+        changeDirection = do
+          rDir <- randomRIO (0, changeDir trainingParameters') :: IO Int
+          return $ if rDir == 1 then direction' * (-1) else direction'
+        changeDirectionStrength :: IO (Vector Double)
+        changeDirectionStrength = do
+          rDirStrength <- randomRIO (0, 0.1) :: IO Double
+          return $ cmap (\x -> x * ( 1 + rDirStrength)) directionStength' * direction'
+        
+        
 
 
 
