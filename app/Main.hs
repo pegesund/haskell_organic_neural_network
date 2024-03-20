@@ -9,6 +9,9 @@ import Numeric.LinearAlgebra
 import Data.List
 import System.Random
 import Control.Monad
+import Data.Function
+
+
 
 
 
@@ -63,12 +66,12 @@ instance Show NeuralNetwork where
 
 createDefaultTrainingParameters :: TrainingParameters
 createDefaultTrainingParameters = TraininParameters {
-  epochs = 10,
-  batchSize = 100,
-  maxChildren = 10,
+  epochs = 100,
+  batchSize = 150,
+  maxChildren = 20,
   maxEphochLifes = 10,
-  devSpeed = 0.1,
-  lossFunction = \x y -> sumElements $ cmap (** 2) (x - y),
+  devSpeed = 1,
+  lossFunction = \x y -> sumElements $ cmap (** 2) (abs (x - y)),
   accuracyFunction = \x y -> sumElements $ cmap (** 2) (x - y),
   changeDir = 10,
   numberOfChildren = 10
@@ -80,7 +83,7 @@ trainingDataFromFile file = do
     nums <- iterateFile file <&> mapToNumbers
     let floats = mapToFloats nums
     let lables::[Int] = map (fromIntegral . head) nums
-    let labelVectors = map (l2Normalize . createLabelVector 10) lables
+    let labelVectors = map (normalizeDoubleVectorToMax . createLabelVector 10) lables
     return $ zipWith TrainingData floats labelVectors
     where
       mapToFloats :: [[Int]] -> [Vector Double]
@@ -106,8 +109,6 @@ softMax x = cmap (/ sumElements (cmap exp x)) (cmap exp x)
 tanH :: Vector Double -> Vector Double
 tanH = cmap tanh
 
-l2Normalize :: Vector Double -> Vector Double
-l2Normalize x = cmap (/ sumElements (cmap (** 2) x)) x
 
 createLayerWithRandomWeights :: Int -> AFunction -> IO Layer
 createLayerWithRandomWeights len aFunction = do
@@ -129,18 +130,16 @@ feedForward (NeuralNetwork _ layers) indata = foldl' feedForwardLayer indata lay
     where
       feedForwardLayer :: Vector Double -> Layer -> Vector Double
       feedForwardLayer indata' (Layer weights'  _ _ activation') = case activation' of
-        Relu -> l2Normalize $ sumWeights relu
-        Sigmoid -> l2Normalize $ sumWeights sigmoid
+        Relu -> normalizeDoubleVectorToMax $ sumWeights relu
+        Sigmoid -> normalizeDoubleVectorToMax $ sumWeights sigmoid
         SoftMax -> sumWeights softMax
-        Tanh -> l2Normalize $ sumWeights tanH
-        where sumWeights func = func $ let allWeightsAndBiases theWeight = sumElements $ cmap (+ theWeight) indata'
+        Tanh -> normalizeDoubleVectorToMax $ sumWeights tanH
+        where sumWeights func = func $ let allWeightsAndBiases theWeight = sumElements $ cmap (* theWeight) indata'
                                           in cmap allWeightsAndBiases weights'
 
 main :: IO ()
 main = do
-    trainingData <- trainingDataFromFile "/var/tmp/mnist/mnist_train.csv"
-    print $ length trainingData
-    testme
+    testTraining
 
 testme :: IO ()
 testme = do
@@ -150,6 +149,8 @@ testme = do
     print nn
     print $ feedForward nn indata
 
+normalizeDoubleVectorToMax :: Vector Double -> Vector Double
+normalizeDoubleVectorToMax v = cmap (/ m) v where m = maxElement v
 
 updateWeights :: NeuralNetwork -> TrainingParameters -> IO NeuralNetwork
 updateWeights nn traininParameters = do
@@ -171,7 +172,7 @@ updateWeights nn traininParameters = do
         changeDirectionStrength :: IO (Vector Double)
         changeDirectionStrength = do
           rDirStrength <- randomRIO (0, 0.1) :: IO Double
-          return $ cmap (\x -> x * ( 1 + rDirStrength)) directionStength' * direction'
+          return $ cmap (\x -> x * ( 1 + (rDirStrength * devSpeed trainingParameters'))) directionStength' * direction'
 
 mergeNetworksAddition :: NeuralNetwork -> NeuralNetwork -> NeuralNetwork
 mergeNetworksAddition nn1 nn2 = NeuralNetwork (biases nn1) (zipWith mergeLayers (layers nn1) (layers nn2))
@@ -216,20 +217,59 @@ createChildrenFromNetwork n trainingParameters nn = do
 trainNetworks :: [TrainingData] -> [NeuralNetwork] -> TrainingParameters -> IO [NeuralNetwork]
 trainNetworks trainingData' networks trainingParameters' = do
   children <- mapM (createChildrenFromNetwork (numberOfChildren trainingParameters') trainingParameters') networks
-  let children' = concat children
+  let children' = concat children ++ networks
   -- pick batch size random training data
   randomGenerator <- getStdGen
   let indexes = take (batchSize trainingParameters') $ randomRs (0, length trainingData' - 1) randomGenerator
+  -- print indexes
   let batch = map (trainingData' !!) indexes
   -- run feedForward on each of the children with all the batches
-  let resultVector :: [Vector Double] = zipWith (\x y -> feedForward x (inputs y)) children' batch
+  let resultVector :: [[Vector Double]] = map (\child -> map (feedForward child . inputs) batch) children'
   -- calculate the loss for each of the children
-  let losses = zipWith (lossFunction trainingParameters') resultVector (map label batch)
+  let losses = do
+        result <- resultVector
+        let inputs = map label batch
+        let sumLosses = sum $ concatMap (\res -> map (lossFunction trainingParameters' res) inputs) result
+        return sumLosses
   neuralNetworksWithLosses <- zipWithM (\x y -> return $ NeuralNetworkWithLoss x y) children' losses
+  -- print len of both children' and losses
+  putStrLn $ "Children: " ++ show (length children') ++ " Losses: " ++ show (length losses) ++ " resultVector: " ++ show (length resultVector)
   let sorted = sortOn loss neuralNetworksWithLosses
   let best = take (maxChildren trainingParameters') sorted
-  putStrLn $ "Losses: " ++ show (map loss best)
+  let accuracy = calculateAccuracy batch (nn (head best))
+  putStrLn $ "Losses: " ++ show (sum (map loss best))  ++ " Accuracy: " ++ show accuracy
+
   return $ map nn best
+
+-- do not use maxIndex as variable name in the following function
+calculateAccuracy :: [TrainingData] -> NeuralNetwork -> Double
+calculateAccuracy trainingData' nn =
+  map (\x -> if maxIndex (feedForward nn (inputs x)) == maxIndex (label x) then 1 else 0) trainingData' & sum & (/ fromIntegral (length trainingData'))
+
+calculateAccuracyWithCounter :: [TrainingData] -> NeuralNetwork -> IO Double
+calculateAccuracyWithCounter trainingData' nn =
+  let
+    accCount :: Int -> [TrainingData] -> Double -> IO Double
+    accCount _ [] acc = pure (acc / fromIntegral (length trainingData'))
+    accCount counter (x:xs) acc =
+      let
+        prediction = feedForward nn (inputs x)
+        labelIndex = maxIndex (label x)
+        predictionIndex = maxIndex prediction
+        newAcc = if predictionIndex == labelIndex then acc + 1 else acc
+      in do
+        when (counter == 1) $ print nn
+        when ((counter `mod` 100) == 0) $ putStrLn $ "Iteration " ++ show counter ++ ": Predicted index " ++ show predictionIndex ++ ", Label index " ++ show labelIndex
+        accCount (counter + 1) xs newAcc
+  in accCount 1 trainingData' 0
+
+
+testTrainingFirstLine :: IO (Vector Double)
+testTrainingFirstLine = do
+      trainingData <- trainingDataFromFile "/var/tmp/mnist/mnist_train.csv"
+      let layers = [(784, Relu), (100, Relu), (10, SoftMax)]
+      nn <- createNeuralNetwork layers
+      return $ feedForward nn (inputs $ head trainingData)
 
 
 testTraining :: IO ()
@@ -240,15 +280,10 @@ testTraining = do
       let trainingParameters = createDefaultTrainingParameters
       let nns networks epochs trainingparams  = do
             if epochs == 0 then return networks else do
-              putStrLn $ "Epoch: " ++ show epochs
+              putStr $ "Epoch: " ++ show epochs ++ " -- "
               newNetworks <- trainNetworks trainingData networks trainingparams
               nns newNetworks (epochs - 1) trainingparams
-      _trainedNetworks <- nns [nn] (epochs trainingParameters) trainingParameters
+      trainedNetworks <- nns [nn] (epochs trainingParameters) trainingParameters
+      accuracy <- calculateAccuracyWithCounter (take 1000 trainingData) (head trainedNetworks)
+      print $ "Accuracy: " ++ show accuracy
       print "Done"
-
-testTrainingFirstLine :: IO (Vector Double)
-testTrainingFirstLine = do
-      trainingData <- trainingDataFromFile "/var/tmp/mnist/mnist_train.csv"
-      let layers = [(784, Relu), (100, Relu), (10, SoftMax)]
-      nn <- createNeuralNetwork layers
-      return $ feedForward nn (inputs $ head trainingData)
