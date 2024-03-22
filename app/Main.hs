@@ -67,7 +67,7 @@ instance Show NeuralNetwork where
 createDefaultTrainingParameters :: TrainingParameters
 createDefaultTrainingParameters = TraininParameters {
   epochs = 100,
-  batchSize = 150,
+  batchSize = 300,
   maxChildren = 20,
   maxEphochLifes = 10,
   devSpeed = 1,
@@ -144,7 +144,7 @@ main = do
 testme :: IO ()
 testme = do
     let indata = fromList [1, 2, 3]
-    let layers = [(2, Relu), (1, Relu)]
+    let layers = [(20, Relu), (1, Relu)]
     nn <- createNeuralNetwork layers
     print nn
     print $ feedForward nn indata
@@ -214,8 +214,24 @@ createChildrenFromNetwork n trainingParameters nn = do
   replicateM n (updateWeights nn trainingParameters)
 
 
-trainNetworks :: [TrainingData] -> [NeuralNetwork] -> TrainingParameters -> IO [NeuralNetwork]
-trainNetworks trainingData' networks trainingParameters' = do
+pickBestSurvivors :: [TrainingData] -> [TrainingData] -> [NeuralNetwork] -> [NeuralNetwork] -> TrainingParameters -> IO [NeuralNetwork]
+pickBestSurvivors oldBatch newBatch parents children trainingParameters = do
+  let concatedBatches = oldBatch ++ newBatch
+  concatedNetworks <- sequence $ concatMap (\x -> map (mergeNetworkRandom x) children) parents
+  let resultVector :: [[Vector Double]] = map (\child -> map (feedForward child . inputs) concatedBatches) concatedNetworks
+  let losses = do
+        result <- resultVector
+        let sumLosses = sum $ concatMap (\res -> map (lossFunction trainingParameters res . label) concatedBatches) result
+        return sumLosses
+  neuralNetworksWithLosses <- zipWithM (\x y -> return $ NeuralNetworkWithLoss x y) concatedNetworks losses
+  let sorted = sortOn loss neuralNetworksWithLosses
+  let best = take (maxChildren trainingParameters) sorted
+  return $ map nn best
+
+
+
+trainNetworks :: [TrainingData] -> [TrainingData] -> [NeuralNetwork] -> TrainingParameters -> IO ([NeuralNetwork], [TrainingData])
+trainNetworks oldBatch trainingData' networks trainingParameters' = do
   children <- mapM (createChildrenFromNetwork (numberOfChildren trainingParameters') trainingParameters') networks
   let children' = concat children ++ networks
   -- pick batch size random training data
@@ -235,11 +251,13 @@ trainNetworks trainingData' networks trainingParameters' = do
   -- print len of both children' and losses
   putStrLn $ "Children: " ++ show (length children') ++ " Losses: " ++ show (length losses) ++ " resultVector: " ++ show (length resultVector)
   let sorted = sortOn loss neuralNetworksWithLosses
-  let best = take (maxChildren trainingParameters') sorted
-  let accuracy = calculateAccuracy batch (nn (head best))
-  putStrLn $ "Losses: " ++ show (sum (map loss best))  ++ " Accuracy: " ++ show accuracy
+  let bestChildren = take (maxChildren trainingParameters') sorted
+  -- pick best of children, parents and outcome
+  best <- pickBestSurvivors oldBatch batch networks (map nn bestChildren) trainingParameters'
+  let accuracy = calculateAccuracy batch (head best)
+  putStrLn $ "Losses: " ++ show (sum (map loss bestChildren))  ++ " Accuracy: " ++ show accuracy
 
-  return $ map nn best
+  return (best, batch)
 
 -- do not use maxIndex as variable name in the following function
 calculateAccuracy :: [TrainingData] -> NeuralNetwork -> Double
@@ -275,15 +293,15 @@ testTrainingFirstLine = do
 testTraining :: IO ()
 testTraining = do
       trainingData <- trainingDataFromFile "/var/tmp/mnist/mnist_train.csv"
-      let layers = [(784, Relu), (100, Relu), (10, SoftMax)]
+      let layers = [(70, Relu), (70, Relu), (10, SoftMax)]
       nn <- createNeuralNetwork layers
       let trainingParameters = createDefaultTrainingParameters
-      let nns networks epochs trainingparams  = do
+      let nns networks epochs trainingparams oldBatch = do
             if epochs == 0 then return networks else do
               putStr $ "Epoch: " ++ show epochs ++ " -- "
-              newNetworks <- trainNetworks trainingData networks trainingparams
-              nns newNetworks (epochs - 1) trainingparams
-      trainedNetworks <- nns [nn] (epochs trainingParameters) trainingParameters
+              (newNetworks, newBatch) <- trainNetworks oldBatch trainingData networks trainingparams
+              nns newNetworks (epochs - 1) trainingparams newBatch
+      trainedNetworks <- nns [nn] (epochs trainingParameters) trainingParameters []
       accuracy <- calculateAccuracyWithCounter (take 1000 trainingData) (head trainedNetworks)
       print $ "Accuracy: " ++ show accuracy
       print "Done"
