@@ -10,17 +10,10 @@ import Data.List
 import System.Random
 import Control.Monad
 import Data.Function
-import UnliftIO (mapConcurrently)
 
-import Control.Concurrent (forkIO, threadDelay)
+import Control.Concurrent (forkIO)
+import GHC.MVar
 
-
-
-
-
-
--- import UnliftIO
--- import Control.Concurrent
 
 -- Check this one for benchmarks: https://www.kaggle.com/code/jedrzejdudzicz/mnist-dataset-100-accuracy
 
@@ -72,13 +65,13 @@ instance Show NeuralNetwork where
 
 createDefaultTrainingParameters :: TrainingParameters
 createDefaultTrainingParameters = TraininParameters {
-  epochs = 100,
+  epochs = 5,
   batchSize = 300,
   maxChildren = 20,
   maxEphochLifes = 10,
   devSpeed = 1,
   lossFunction = \x y -> sumElements $ cmap (** 2) (abs (x - y)),
-  accuracyFunction = \x y -> sumElements $ cmap (** 2) (x - y),
+  accuracyFunction = \_x _y -> 0,
   changeDir = 10,
   numberOfChildren = 10,
   extraPowerToEscapeLocalMinima = 10,
@@ -261,7 +254,6 @@ trainNetworks oldBatches trainingData' networks trainingParameters' = do
         return sumLosses
   neuralNetworksWithLosses <- zipWithM (\x y -> return $ NeuralNetworkWithLoss x y) children' losses
   -- print len of both children' and losses
-  putStrLn $ "Children: " ++ show (length children') ++ " Losses: " ++ show (length losses) ++ " resultVector: " ++ show (length resultVector)
   let sorted = sortOn loss neuralNetworksWithLosses
   let bestChildren = take (maxChildren trainingParameters') sorted
   -- pick best of children, parents and outcome
@@ -303,31 +295,34 @@ testTrainingFirstLine = do
 
 
 
-trainEpochs :: [TrainingData] -> [NeuralNetwork] -> Int -> TrainingParameters -> [[TrainingData]] -> IO [NeuralNetwork]
-trainEpochs trainingData networks epochs trainingparams oldBatches = do
-  if epochs == 0 then return networks else do
-    putStr $ "Epoch: " ++ show epochs ++ " -- "
+trainEpochs :: [TrainingData] -> [NeuralNetwork] -> Int -> TrainingParameters -> [[TrainingData]] -> MVar [NeuralNetwork] -> IO [NeuralNetwork]
+trainEpochs trainingData networks epochs trainingparams oldBatches result = do
+  if epochs == 0 then do
+    putMVar result networks
+    return networks
+    else do
+    putStr $ "Epoch: " ++ show epochs ++ "   "
     (newNetworks, newBatch) <- trainNetworks oldBatches trainingData networks trainingparams
     let newBatches = take (keepOldBatchesNum trainingparams) (newBatch : oldBatches)
-    trainEpochs trainingData newNetworks (epochs - 1) trainingparams newBatches
+    trainEpochs trainingData newNetworks (epochs - 1) trainingparams newBatches result
 
 testTraining :: IO ()
 testTraining = do
+      putStrLn "Starting training"
       trainingData <- trainingDataFromFile "/var/tmp/mnist/mnist_train.csv"
       let layers = [(70, Relu), (70, Relu), (10, SoftMax)]
       nn <- createNeuralNetwork layers
       let trainingParameters = createDefaultTrainingParameters
-      -- trainedNetworks <- trainEpochs trainingData [nn] (epochs trainingParameters) trainingParameters []
-      -- spawn 10 threads and train them all in parallell
-      let concurrentTrainings::[Int] = [1..10]
+      -- create a list of 10 MVars
+      concurrentTrainings <- replicateM 10 newEmptyMVar
+      mapM_ (\mvar -> forkIO $ do
+        trainedNetworks <- trainEpochs trainingData [nn] (epochs trainingParameters) trainingParameters [] mvar
+        print trainedNetworks) concurrentTrainings
+      -- wait for all mvars to be filled
+      trainedNetworks' <- mapM takeMVar concurrentTrainings
+      -- print length of trainedNetworks'
+      print $ length trainedNetworks'
       -- trainedNetworks <- mapConcurrently (\_ -> return $ trainEpochs trainingData [nn] (epochs trainingParameters) trainingParameters []) concurrentTrainings
       -- _trainedNetworks'' <- sequence trainedNetworks
-      -- print $ "Trained networks: " ++ show (length trainedNetworks)
-      -- accuracy <- calculateAccuracyWithCounter (take 1000 trainingData) (head trainedNetworks)
-      -- print $ "Accuracy: " ++ show accuracy
-      -- fork a thread for each of the trained networks by using forkIO
-      mapM_ (\x -> forkIO $ do
-        _trainedNetworks <- trainEpochs trainingData [nn] (epochs trainingParameters) trainingParameters []
-        return ()) concurrentTrainings
-      threadDelay 1000000000
+
       print "Done"
