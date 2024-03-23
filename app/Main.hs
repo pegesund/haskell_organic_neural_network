@@ -34,11 +34,14 @@ data TrainingParameters = TraininParameters {
   lossFunction :: Vector Double -> Vector Double -> Double,
   accuracyFunction :: Vector Double -> Vector Double -> Double,
   changeDir :: Int,
-  numberOfChildren :: Int
+  numberOfChildren :: Int,
+  extraPowerToEscapeLocalMinima :: Double,
+  changesForExtraPower :: Int,
+  keepOldBatchesNum :: Int
   }
 
 instance Show TrainingParameters where
-  show (TraininParameters epochs' batchSize' maxChildren' maxEphochLifes' devSpeed' _ _ _ _) = "TraininParameters\n" ++ "epochs: " ++ show epochs' ++ "\n" ++ "batchSize: " ++ show batchSize' ++ "\n" ++ "maxChildren: " ++ show maxChildren' ++ "\n" ++ "maxEphochLifes: " ++ show maxEphochLifes' ++ "\n" ++ "devSpeed: " ++ show devSpeed'
+  show (TraininParameters epochs' batchSize' maxChildren' maxEphochLifes' devSpeed' _ _ _ _ _ _ _)  = "TraininParameters\n" ++ "epochs: " ++ show epochs' ++ "\n" ++ "batchSize: " ++ show batchSize' ++ "\n" ++ "maxChildren: " ++ show maxChildren' ++ "\n" ++ "maxEphochLifes: " ++ show maxEphochLifes' ++ "\n" ++ "devSpeed: " ++ show devSpeed'
 
 data Layer = Layer {
   weights :: Vector Double,
@@ -74,8 +77,12 @@ createDefaultTrainingParameters = TraininParameters {
   lossFunction = \x y -> sumElements $ cmap (** 2) (abs (x - y)),
   accuracyFunction = \x y -> sumElements $ cmap (** 2) (x - y),
   changeDir = 10,
-  numberOfChildren = 10
-}
+  numberOfChildren = 10,
+  extraPowerToEscapeLocalMinima = 10,
+  changesForExtraPower = 5,
+  keepOldBatchesNum = 2
+  }
+
 
 
 trainingDataFromFile :: FilePath -> IO [TrainingData]
@@ -172,7 +179,9 @@ updateWeights nn traininParameters = do
         changeDirectionStrength :: IO (Vector Double)
         changeDirectionStrength = do
           rDirStrength <- randomRIO (0, 0.1) :: IO Double
-          return $ cmap (\x -> x * ( 1 + (rDirStrength * devSpeed trainingParameters'))) directionStength' * direction'
+          tryToEscapeLocalMinima <- randomRIO (0, changesForExtraPower trainingParameters') :: IO Int
+          let directionStengthEscape = if tryToEscapeLocalMinima == 1 then  extraPowerToEscapeLocalMinima trainingParameters' else 1
+          return $ cmap (\x -> x * ( 1 + (rDirStrength * devSpeed trainingParameters' * directionStengthEscape))) directionStength' * direction'
 
 mergeNetworksAddition :: NeuralNetwork -> NeuralNetwork -> NeuralNetwork
 mergeNetworksAddition nn1 nn2 = NeuralNetwork (biases nn1) (zipWith mergeLayers (layers nn1) (layers nn2))
@@ -214,9 +223,9 @@ createChildrenFromNetwork n trainingParameters nn = do
   replicateM n (updateWeights nn trainingParameters)
 
 
-pickBestSurvivors :: [TrainingData] -> [TrainingData] -> [NeuralNetwork] -> [NeuralNetwork] -> TrainingParameters -> IO [NeuralNetwork]
-pickBestSurvivors oldBatch newBatch parents children trainingParameters = do
-  let concatedBatches = oldBatch ++ newBatch
+pickBestSurvivors :: [[TrainingData]] -> [TrainingData] -> [NeuralNetwork] -> [NeuralNetwork] -> TrainingParameters -> IO [NeuralNetwork]
+pickBestSurvivors oldBatches newBatch parents children trainingParameters = do
+  let concatedBatches = concat $ oldBatches ++ [newBatch]
   concatedNetworks <- sequence $ concatMap (\x -> map (mergeNetworkRandom x) children) parents
   let resultVector :: [[Vector Double]] = map (\child -> map (feedForward child . inputs) concatedBatches) concatedNetworks
   let losses = do
@@ -230,8 +239,8 @@ pickBestSurvivors oldBatch newBatch parents children trainingParameters = do
 
 
 
-trainNetworks :: [TrainingData] -> [TrainingData] -> [NeuralNetwork] -> TrainingParameters -> IO ([NeuralNetwork], [TrainingData])
-trainNetworks oldBatch trainingData' networks trainingParameters' = do
+trainNetworks :: [[TrainingData]] -> [TrainingData] -> [NeuralNetwork] -> TrainingParameters -> IO ([NeuralNetwork], [TrainingData])
+trainNetworks oldBatches trainingData' networks trainingParameters' = do
   children <- mapM (createChildrenFromNetwork (numberOfChildren trainingParameters') trainingParameters') networks
   let children' = concat children ++ networks
   -- pick batch size random training data
@@ -253,7 +262,7 @@ trainNetworks oldBatch trainingData' networks trainingParameters' = do
   let sorted = sortOn loss neuralNetworksWithLosses
   let bestChildren = take (maxChildren trainingParameters') sorted
   -- pick best of children, parents and outcome
-  best <- pickBestSurvivors oldBatch batch networks (map nn bestChildren) trainingParameters'
+  best <- pickBestSurvivors oldBatches batch networks (map nn bestChildren) trainingParameters'
   let accuracy = calculateAccuracy batch (head best)
   putStrLn $ "Losses: " ++ show (sum (map loss bestChildren))  ++ " Accuracy: " ++ show accuracy
 
@@ -290,18 +299,22 @@ testTrainingFirstLine = do
       return $ feedForward nn (inputs $ head trainingData)
 
 
+
+trainEpochs :: [TrainingData] -> [NeuralNetwork] -> Int -> TrainingParameters -> [[TrainingData]] -> IO [NeuralNetwork]
+trainEpochs trainingData networks epochs trainingparams oldBatches = do
+  if epochs == 0 then return networks else do
+    putStr $ "Epoch: " ++ show epochs ++ " -- "
+    (newNetworks, newBatch) <- trainNetworks oldBatches trainingData networks trainingparams
+    let newBatches = take (keepOldBatchesNum trainingparams) (newBatch : oldBatches)
+    trainEpochs trainingData newNetworks (epochs - 1) trainingparams newBatches
+
 testTraining :: IO ()
 testTraining = do
       trainingData <- trainingDataFromFile "/var/tmp/mnist/mnist_train.csv"
       let layers = [(70, Relu), (70, Relu), (10, SoftMax)]
       nn <- createNeuralNetwork layers
       let trainingParameters = createDefaultTrainingParameters
-      let nns networks epochs trainingparams oldBatch = do
-            if epochs == 0 then return networks else do
-              putStr $ "Epoch: " ++ show epochs ++ " -- "
-              (newNetworks, newBatch) <- trainNetworks oldBatch trainingData networks trainingparams
-              nns newNetworks (epochs - 1) trainingparams newBatch
-      trainedNetworks <- nns [nn] (epochs trainingParameters) trainingParameters []
+      trainedNetworks <- trainEpochs trainingData [nn] (epochs trainingParameters) trainingParameters []
       accuracy <- calculateAccuracyWithCounter (take 1000 trainingData) (head trainedNetworks)
       print $ "Accuracy: " ++ show accuracy
       print "Done"
