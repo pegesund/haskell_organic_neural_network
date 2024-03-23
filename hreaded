@@ -1,2 +1,2 @@
-'/home/petter/dev/haskell/mnist/dist-newstyle/build/x86_64-linux/ghc-9.4.8/mnist-0.1.0.0/x/mnist/build/mnist/mnist' +RTS '-N10' '-T' '-threaded' 
-<<ghc: 36378853534600 bytes, 8099655 GCs, 1167906188/2624077008 avg/max bytes residency (29 samples), 7689M in use, 0.007 INIT (0.004 elapsed), 5475.965 MUT (4630.570 elapsed), 1013.034 GC (220.938 elapsed) :ghc>>
+'cabal' 'run' +RTS '-N10' '-threaded' 
+<<ghc: 48737472 bytes, 12 GCs, 1643028/3027904 avg/max bytes residency (4 samples), 54M in use, 0.005 INIT (0.003 elapsed), 0.018 MUT (0.018 elapsed), 0.026 GC (0.013 elapsed) :ghc>>

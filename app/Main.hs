@@ -10,6 +10,9 @@ import Data.List
 import System.Random
 import Control.Monad
 import Data.Function
+import UnliftIO (mapConcurrently)
+
+import Control.Concurrent (forkIO, threadDelay)
 
 
 
@@ -314,7 +317,17 @@ testTraining = do
       let layers = [(70, Relu), (70, Relu), (10, SoftMax)]
       nn <- createNeuralNetwork layers
       let trainingParameters = createDefaultTrainingParameters
-      trainedNetworks <- trainEpochs trainingData [nn] (epochs trainingParameters) trainingParameters []
-      accuracy <- calculateAccuracyWithCounter (take 1000 trainingData) (head trainedNetworks)
-      print $ "Accuracy: " ++ show accuracy
+      -- trainedNetworks <- trainEpochs trainingData [nn] (epochs trainingParameters) trainingParameters []
+      -- spawn 10 threads and train them all in parallell
+      let concurrentTrainings::[Int] = [1..10]
+      -- trainedNetworks <- mapConcurrently (\_ -> return $ trainEpochs trainingData [nn] (epochs trainingParameters) trainingParameters []) concurrentTrainings
+      -- _trainedNetworks'' <- sequence trainedNetworks
+      -- print $ "Trained networks: " ++ show (length trainedNetworks)
+      -- accuracy <- calculateAccuracyWithCounter (take 1000 trainingData) (head trainedNetworks)
+      -- print $ "Accuracy: " ++ show accuracy
+      -- fork a thread for each of the trained networks by using forkIO
+      mapM_ (\x -> forkIO $ do
+        _trainedNetworks <- trainEpochs trainingData [nn] (epochs trainingParameters) trainingParameters []
+        return ()) concurrentTrainings
+      threadDelay 1000000000
       print "Done"
