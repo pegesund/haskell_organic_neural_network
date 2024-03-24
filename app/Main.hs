@@ -14,6 +14,7 @@ import Data.Function
 import Control.Concurrent (forkIO)
 import GHC.MVar
 
+import Data.Map.Strict ( Map, empty, insertWith )
 
 -- Check this one for benchmarks: https://www.kaggle.com/code/jedrzejdudzicz/mnist-dataset-100-accuracy
 
@@ -65,12 +66,12 @@ instance Show NeuralNetwork where
 
 createDefaultTrainingParameters :: TrainingParameters
 createDefaultTrainingParameters = TraininParameters {
-  epochs = 5,
+  epochs = 4,
   batchSize = 300,
   maxChildren = 20,
   maxEphochLifes = 10,
   devSpeed = 1,
-  lossFunction = \x y -> sumElements $ cmap (** 2) (abs (x - y)),
+  lossFunction = \x y -> sumElements $ cmap (** 1) (abs (x - y)),
   accuracyFunction = \_x _y -> 0,
   changeDir = 10,
   numberOfChildren = 10,
@@ -78,7 +79,6 @@ createDefaultTrainingParameters = TraininParameters {
   changesForExtraPower = 5,
   keepOldBatchesNum = 2
   }
-
 
 
 trainingDataFromFile :: FilePath -> IO [TrainingData]
@@ -191,6 +191,21 @@ mergeNetworksAddition nn1 nn2 = NeuralNetwork (biases nn1) (zipWith mergeLayers 
       activation
 
 
+mergeManyNetworksAddition :: [NeuralNetwork] -> NeuralNetwork
+mergeManyNetworksAddition nns =
+  let numberOfNetworks = fromIntegral $ length nns
+      biases' = head nns & biases
+      lengthOfLayers = map (size . weights) (layers $ head nns)
+      zeroValues::[Vector Double] = replicate (length lengthOfLayers) (konst 0 (head lengthOfLayers) )
+      activations = map activation (layers $ head nns)
+      accumulatedDirections = foldl' (flip (zipWith (+))) zeroValues (map (map direction . layers) nns)
+      accumulatedWeights = foldl' (flip (zipWith (+))) zeroValues (map (map directionStength . layers) nns)
+      avarageDirections = map (/ numberOfNetworks) accumulatedDirections
+      avarageWeights = map (/ numberOfNetworks) accumulatedWeights
+      layers' = zipWith4 Layer avarageWeights avarageDirections avarageWeights activations
+  in NeuralNetwork biases' layers'
+
+
 mergeNetworkRandom :: NeuralNetwork -> NeuralNetwork -> IO NeuralNetwork
 mergeNetworkRandom nn1 nn2 = do
   let layers1 = layers nn1
@@ -223,12 +238,15 @@ pickBestSurvivors :: [[TrainingData]] -> [TrainingData] -> [NeuralNetwork] -> [N
 pickBestSurvivors oldBatches newBatch parents children trainingParameters = do
   let concatedBatches = concat $ oldBatches ++ [newBatch]
   concatedNetworks <- sequence $ concatMap (\x -> map (mergeNetworkRandom x) children) parents
-  let resultVector :: [[Vector Double]] = map (\child -> map (feedForward child . inputs) concatedBatches) concatedNetworks
+  let concatedNetworks' = concatedNetworks ++ parents ++ children
+  let resultVector :: [[Vector Double]] = map (\child -> map (feedForward child . inputs) concatedBatches) concatedNetworks'
   let losses = do
         result <- resultVector
         let sumLosses = sum $ concatMap (\res -> map (lossFunction trainingParameters res . label) concatedBatches) result
         return sumLosses
-  neuralNetworksWithLosses <- zipWithM (\x y -> return $ NeuralNetworkWithLoss x y) concatedNetworks losses
+  -- print length of concatedNetworks and losses
+  -- putStrLn $ "Length of concatedNetworks: " ++ show (length concatedNetworks) ++ " Length of losses: " ++ show (length losses)
+  neuralNetworksWithLosses <- zipWithM (\x y -> return $ NeuralNetworkWithLoss x y) concatedNetworks' losses
   let sorted = sortOn loss neuralNetworksWithLosses
   let best = take (maxChildren trainingParameters) sorted
   return $ map nn best
@@ -259,7 +277,9 @@ trainNetworks oldBatches trainingData' networks trainingParameters' = do
   -- pick best of children, parents and outcome
   best <- pickBestSurvivors oldBatches batch networks (map nn bestChildren) trainingParameters'
   let accuracy = calculateAccuracy batch (head best)
-  putStrLn $ "Losses: " ++ show (sum (map loss bestChildren))  ++ " Accuracy: " ++ show accuracy
+  let lossesTotal::Int = round (sum (map loss bestChildren))
+  let accuracyPretty::Int = round (accuracy * 100)
+  putStrLn $ "Losses: " ++ show lossesTotal  ++ " Accuracy: " ++ show accuracyPretty
 
   return (best, batch)
 
@@ -306,6 +326,22 @@ trainEpochs trainingData networks epochs trainingparams oldBatches result = do
     let newBatches = take (keepOldBatchesNum trainingparams) (newBatch : oldBatches)
     trainEpochs trainingData newNetworks (epochs - 1) trainingparams newBatches result
 
+
+
+inspectNetworks :: [NeuralNetwork] -> [TrainingData] -> IO ()
+inspectNetworks nns trainingData = do
+  -- pick 1000 random training data
+  randomGenerator <- getStdGen
+  let indexes = take 1000 $ randomRs (0, length trainingData - 1) randomGenerator
+  -- print indexes
+  let batch = map (trainingData !!) indexes
+  let guessedValue::Map Int Int = empty
+  let guessedValues = foldl' (\acc nn -> foldl' (\acc' td -> insertWith (+) (maxIndex (feedForward nn (inputs td))) 1 acc') acc batch) guessedValue [head nns]
+  print guessedValues
+  putStrLn "Number of networks: " >> print (length nns)
+  print "done"
+
+
 testTraining :: IO ()
 testTraining = do
       putStrLn "Starting training"
@@ -314,7 +350,7 @@ testTraining = do
       nn <- createNeuralNetwork layers
       let trainingParameters = createDefaultTrainingParameters
       -- create a list of 10 MVars
-      concurrentTrainings <- replicateM 10 newEmptyMVar
+      concurrentTrainings <- replicateM 5 newEmptyMVar
       mapM_ (\mvar -> forkIO $ do
         trainedNetworks <- trainEpochs trainingData [nn] (epochs trainingParameters) trainingParameters [] mvar
         print trainedNetworks) concurrentTrainings
@@ -322,7 +358,25 @@ testTraining = do
       trainedNetworks' <- mapM takeMVar concurrentTrainings
       -- print length of trainedNetworks'
       print $ length trainedNetworks'
+      inspectNetworks (concat trainedNetworks') trainingData
       -- trainedNetworks <- mapConcurrently (\_ -> return $ trainEpochs trainingData [nn] (epochs trainingParameters) trainingParameters []) concurrentTrainings
       -- _trainedNetworks'' <- sequence trainedNetworks
+      let mergedNetwork = mergeManyNetworksAddition (concat trainedNetworks')
+      -- test accuracy on the merged network
+      accuracy <- calculateAccuracyWithCounter trainingData mergedNetwork
+      print accuracy
 
       print "Done"
+
+testInverse01Vector :: IO ()
+testInverse01Vector = do
+  r <- random01Vector 10
+  print r
+  print $ inverse01Vector r
+  where
+    random01Vector :: Int -> IO (Vector Double)
+    random01Vector n = do
+      r <- rand 1 n
+      return $ roundVector ( flatten r)
+    inverse01Vector :: Vector Double -> Vector Double
+    inverse01Vector = cmap (\x -> if x == 0 then 1 else 0)

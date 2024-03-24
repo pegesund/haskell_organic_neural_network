@@ -20,6 +20,16 @@
   (major1) == 4 && (major2) <  17 || \
   (major1) == 4 && (major2) == 17 && (minor) <= 2)
 #endif /* MIN_VERSION_base */
+/* package containers-0.7 */
+#ifndef VERSION_containers
+#define VERSION_containers "0.7"
+#endif /* VERSION_containers */
+#ifndef MIN_VERSION_containers
+#define MIN_VERSION_containers(major1,major2,minor) (\
+  (major1) <  0 || \
+  (major1) == 0 && (major2) <  7 || \
+  (major1) == 0 && (major2) == 7 && (minor) <= 0)
+#endif /* MIN_VERSION_containers */
 /* package hmatrix-0.20.2 */
 #ifndef VERSION_hmatrix
 #define VERSION_hmatrix "0.20.2"
@@ -50,16 +60,6 @@
   (major1) == 0 && (major2) <  2 || \
   (major1) == 0 && (major2) == 2 && (minor) <= 5)
 #endif /* MIN_VERSION_split */
-/* package unliftio-0.2.25.0 */
-#ifndef VERSION_unliftio
-#define VERSION_unliftio "0.2.25.0"
-#endif /* VERSION_unliftio */
-#ifndef MIN_VERSION_unliftio
-#define MIN_VERSION_unliftio(major1,major2,minor) (\
-  (major1) <  0 || \
-  (major1) == 0 && (major2) <  2 || \
-  (major1) == 0 && (major2) == 2 && (minor) <= 25)
-#endif /* MIN_VERSION_unliftio */
 
 /* tool gcc-13.2.1 */
 #ifndef TOOL_VERSION_gcc
