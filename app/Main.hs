@@ -1,4 +1,4 @@
-{-# OPTIONS_GHC -Wno-orphans #-}
+
 {-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
 {-# HLINT ignore "Use newtype instead of data" #-}
 {-# HLINT ignore "Use join" #-}
@@ -14,7 +14,7 @@ import Data.Function
 import Control.Concurrent (forkIO)
 import GHC.MVar
 
-import Data.Map.Strict ( Map, empty, insertWith )
+import Data.Map.Strict ( Map, empty, insertWith)
 
 -- Check this one for benchmarks: https://www.kaggle.com/code/jedrzejdudzicz/mnist-dataset-100-accuracy
 
@@ -195,15 +195,14 @@ mergeManyNetworksAddition :: [NeuralNetwork] -> NeuralNetwork
 mergeManyNetworksAddition nns =
   let numberOfNetworks = fromIntegral $ length nns
       biases' = head nns & biases
-      lengthOfLayers = map (size . weights) (layers $ head nns)
-      zeroValues::[Vector Double] = replicate (length lengthOfLayers) (konst 0 (head lengthOfLayers) )
       activations = map activation (layers $ head nns)
-      accumulatedDirections = foldl' (flip (zipWith (+))) zeroValues (map (map direction . layers) nns)
-      accumulatedWeights = foldl' (flip (zipWith (+))) zeroValues (map (map directionStength . layers) nns)
-      avarageDirections = map (/ numberOfNetworks) accumulatedDirections
-      avarageWeights = map (/ numberOfNetworks) accumulatedWeights
-      layers' = zipWith4 Layer avarageWeights avarageDirections avarageWeights activations
-  in NeuralNetwork biases' layers'
+      allWeightsGroupedByNetwork = map (map weights . layers) nns
+      weightsSummed = map ((/ numberOfNetworks) . sum) (transpose allWeightsGroupedByNetwork)
+      allDirectionsGroupedByNetwork = map (map direction . layers) nns
+      directionsSummed = map ((/ numberOfNetworks) . sum) (transpose allDirectionsGroupedByNetwork)
+      newDirections = head nns & layers & map direction
+      network = zipWith4 Layer weightsSummed directionsSummed newDirections activations
+  in NeuralNetwork biases' network
 
 
 mergeNetworkRandom :: NeuralNetwork -> NeuralNetwork -> IO NeuralNetwork
@@ -240,17 +239,33 @@ pickBestSurvivors oldBatches newBatch parents children trainingParameters = do
   concatedNetworks <- sequence $ concatMap (\x -> map (mergeNetworkRandom x) children) parents
   let concatedNetworks' = concatedNetworks ++ parents ++ children
   let resultVector :: [[Vector Double]] = map (\child -> map (feedForward child . inputs) concatedBatches) concatedNetworks'
+  let guessedValues = resultVector & map (map maxIndex)
+  let percentageOfOccurence = findPercentageOfOccurence 0.15 guessedValues
+  let zippedNetworks = zip3 concatedNetworks' resultVector percentageOfOccurence
+  let filteredCompound = filter (\(_network, _result, passOrNots) -> and passOrNots) zippedNetworks
+  let filteredNetworks = map (\(network, _result, _passOrNots) -> network) filteredCompound
+  let filteredResults = map (\(_network, result, _passOrNots) -> result) filteredCompound
+
+  
   let losses = do
-        result <- resultVector
+        result <- filteredResults
         let sumLosses = sum $ concatMap (\res -> map (lossFunction trainingParameters res . label) concatedBatches) result
-        return sumLosses
-  -- print length of concatedNetworks and losses
-  -- putStrLn $ "Length of concatedNetworks: " ++ show (length concatedNetworks) ++ " Length of losses: " ++ show (length losses)
-  neuralNetworksWithLosses <- zipWithM (\x y -> return $ NeuralNetworkWithLoss x y) concatedNetworks' losses
+        let sumLossesAvg = sumLosses / fromIntegral (length result)
+        return sumLossesAvg
+
+  -- putStrLn $ "Length of concatedNetworks: " ++ show (length filteredNetworks) ++ " Length of losses: " ++ show (length losses)
+  neuralNetworksWithLosses <- zipWithM (\x y -> return $ NeuralNetworkWithLoss x y) filteredNetworks losses
   let sorted = sortOn loss neuralNetworksWithLosses
   let best = take (maxChildren trainingParameters) sorted
   return $ map nn best
 
+findPercentageOfOccurence :: Double -> [[Int]] -> [[Bool]]
+findPercentageOfOccurence threshold l =
+  let grouped = map group l
+      countedGrouped = map (map (\x -> (head x, length x))) grouped
+      sumInEachGroup::[Double] = map (fromIntegral . sum . map snd) countedGrouped
+      percentageOfOccurence = zipWith (\x y -> map (\counted -> fromIntegral (snd counted) / x > threshold) y) sumInEachGroup countedGrouped
+      in percentageOfOccurence
 
 
 trainNetworks :: [[TrainingData]] -> [TrainingData] -> [NeuralNetwork] -> TrainingParameters -> IO ([NeuralNetwork], [TrainingData])
@@ -361,11 +376,11 @@ testTraining = do
       inspectNetworks (concat trainedNetworks') trainingData
       -- trainedNetworks <- mapConcurrently (\_ -> return $ trainEpochs trainingData [nn] (epochs trainingParameters) trainingParameters []) concurrentTrainings
       -- _trainedNetworks'' <- sequence trainedNetworks
-      let mergedNetwork = mergeManyNetworksAddition (concat trainedNetworks')
+      -- let mergedNetwork = mergeManyNetworksAddition (concat trainedNetworks')
       -- test accuracy on the merged network
-      accuracy <- calculateAccuracyWithCounter trainingData mergedNetwork
-      print accuracy
-
+      -- accuracy <- calculateAccuracyWithCounter trainingData mergedNetwork
+      -- print accuracy
+      -- inspectNetworks [mergedNetwork] trainingData
       print "Done"
 
 testInverse01Vector :: IO ()
